@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch_geometric.nn import RGCNConv
 from src.layers import RGCLayer, DenseLayer
 
 
@@ -7,6 +8,9 @@ from src.layers import RGCLayer, DenseLayer
 class GAE(nn.Module):
     def __init__(self, config, weight_init):
         super(GAE, self).__init__()
+        self.num_users = config.num_users
+        self.num_relations = config.num_relations
+
         self.gcenc = GCEncoder(config, weight_init)
         self.bidec = BiDecoder(config, weight_init)
 
@@ -26,14 +30,25 @@ class GCEncoder(nn.Module):
         self.accum = config.accum
 
         self.rgc_layer = RGCLayer(config, weight_init)
+        self.rgc_ = RGCNConv(config.num_nodes,config.hidden_size[0],config.num_relations,num_bases=30)
+        self.rgc_2 = RGCNConv(config.hidden_size[0],config.hidden_size[0],config.num_relations,num_bases=30)
         self.dense_layer = DenseLayer(config, weight_init)
 
     def forward(self, x, edge_index, edge_type, edge_norm):
-        features = self.rgc_layer(x, edge_index, edge_type, edge_norm)
-        u_features, i_features = self.separate_features(features)
+#        features = self.rgc_layer(x, edge_index, edge_type, edge_norm)
+        features = nn.ReLU()(self.rgc_(None, edge_index, edge_type, edge_norm))
+        features = self.rgc_2(features, edge_index, edge_type)
+        u_features, i_features = self.separate_features_r(features)
         u_features, i_features = self.dense_layer(u_features, i_features)
 
         return u_features, i_features
+
+    def separate_features_r(self, features):
+        num_nodes = features.shape[0]
+        u_features = features[:self.num_users]
+        i_features = features[self.num_users:]
+        return u_features, i_features
+
 
     def separate_features(self, features):
         if self.accum == 'stack':
@@ -61,7 +76,7 @@ class BiDecoder(nn.Module):
         super(BiDecoder, self).__init__()
         self.num_basis = config.num_basis
         self.num_relations = config.num_relations
-        self.feature_dim = config.hidden_size[1]
+        self.feature_dim = config.hidden_size[-1]
         self.accum = config.accum
         self.apply_drop = config.bidec_drop
 
